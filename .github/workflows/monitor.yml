@@ -1,0 +1,68 @@
+name: Luxury Restock Monitor
+
+on:
+  schedule:
+    # 每 5 分钟检查一次（GitHub 允许的最短间隔；高峰期可能延迟几分钟）
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "运行模式：normal=正常检测，test-email=只发测试邮件，test-bark=只发测试推送"
+        type: choice
+        default: normal
+        options:
+          - normal
+          - test-email
+          - test-bark
+
+# 避免上一次还没跑完，下一次又启动
+concurrency:
+  group: restock-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: 下载代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 安装 Playwright 浏览器
+        run: python -m playwright install --with-deps chromium
+
+      - name: 运行监控
+        env:
+          # 以下全部来自 GitHub Secrets，代码里没有任何明文密码
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          MODE: ${{ github.event.inputs.mode }}
+        run: |
+          case "$MODE" in
+            test-email) python monitor.py --test-email ;;
+            test-bark)  python monitor.py --test-bark ;;
+            *)          python monitor.py ;;
+          esac
+
+      - name: 失败时保存截图
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: ignore
+          retention-days: 7
